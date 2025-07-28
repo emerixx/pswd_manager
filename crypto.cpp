@@ -6,8 +6,47 @@
 #include <ostream>
 #include <sstream>
 #include <string>
-class mc {
+#include <termios.h>
+#include <unistd.h>
+class cli {
 public:
+  static std::string getPassword() {
+    termios oldt, newt;
+    tcgetattr(STDIN_FILENO, &oldt); // get current terminal attributes
+    newt = oldt;
+
+    // Disable canonical mode and echo
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+
+    std::string password;
+    char ch;
+
+    while (true) {
+      ch = getchar(); // getchar() reads one char immediately because ICANON
+                      // disabled
+
+      if (ch == '\n' || ch == '\r') { // Enter key pressed
+        std::cout << '\n';
+        break;
+      } else if (ch == '\t') {
+        continue;
+      } else if (ch == 127 || ch == 8) { // Backspace
+        if (!password.empty()) {
+          password.pop_back();
+          std::cout << "\b \b" << std::flush; // erase last star
+        }
+      } else {
+        password.push_back(ch);
+        std::cout << '*' << std::flush;
+      }
+    }
+
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt); // restore terminal attributes
+
+    return password;
+  }
+
   static std::vector<std::string> split_by_space(const std::string &input) {
     std::istringstream iss(input);
     std::vector<std::string> tokens;
@@ -20,6 +59,11 @@ public:
 
     return tokens;
   }
+}
+
+;
+class mc {
+public:
   static std::string get_SHA256(const std::string &input) {
     unsigned char hash[SHA256_DIGEST_LENGTH]; // 32 bytes
 
@@ -35,27 +79,54 @@ public:
     }
     return hexStream.str();
   }
-  bool is_pw_correct(std::string) { return false; }
+  static bool is_pw_correct(std::string test) {
+    std::ifstream file("pswd"); // open the file
+    if (!file) {
+      std::cerr << "Could not open the file\n";
+      return 1;
+    }
+    std::string pw;
+    std::getline(file, pw);
+    file.close();
+    if (pw == get_SHA256(test))
+      return true;
+    return false;
+  }
 };
 int main() {
-  std::ifstream file("pswd"); // open the file
-  if (!file) {
-    std::cerr << "Could not open the file\n";
-    return 1;
-  }
-  std::string pw;
-  std::getline(file, pw);
-  file.close();
 
   std::string cmnd_full = "";
-
+  std::string sec_input = "";
+  bool unlocked = false;
+  int i = 0;
   while (cmnd_full != "exit") {
     std::cout << "[]->";
     std::getline(std::cin, cmnd_full);
-    std::vector<std::string> cmnd = mc::split_by_space(cmnd_full);
-    if(cmnd[0]=="hash_SHA256"){
-      std::cout<<"Hashing input '"<<cmnd[1]<<"' with SHA256.\n";
-      std::cout<<mc::get_SHA256(cmnd[1])<<std::endl;
+    std::vector<std::string> cmnd = cli::split_by_space(cmnd_full);
+    if (cmnd[0] == "hash_SHA256" && cmnd.size() == 2) {
+      std::cout << "Hashing input '" << cmnd[1] << "' with SHA256.\n";
+      std::cout << mc::get_SHA256(cmnd[1]) << std::endl;
+    } else if (cmnd[0] == "unlock_db" && cmnd.size() == 1) {
+      while (!unlocked && i < 3) {
+        if (i > 0) {
+          std::cout << "Incorrect password, try again\n";
+          std::cout << "Enter the password (" << i << "/3 attempts):\n";
+        } else {
+          std::cout << "Enter the password:\n";
+        }
+        sec_input = cli::getPassword();
+        unlocked = mc::is_pw_correct(sec_input);
+        i++;
+      }
+      if (i == 3) {
+        std::cout
+            << "unlocking db failed, entered the wrong password 3 times.\n";
+      }
+      if(unlocked){
+        std::cout<<"Database unlocked\n";
+      }
+      i = 0;
+      sec_input = "";
     }
   }
 
